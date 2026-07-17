@@ -109,14 +109,41 @@ O Realm `sso-platform` tem um Identity Provider Google (`alias: google`) habilit
 
 Isso só dispara para usuários **novos** sem role nenhuma (na prática, contas Google inéditas); contas locais de demonstração já vêm com suas roles pré-definidas no `realm-export.json` e não são afetadas — o isolamento de acesso entre Agenda e To-Do (ex.: `lucas_agenda` bloqueado no To-Do) continua valendo.
 
-**Configuração das credenciais Google:** `keycloak/realm-export.json` (`identityProviders[0].config`) traz `clientId`/`clientSecret` como placeholders (`CHANGE_ME_GOOGLE_OAUTH_CLIENT_ID` / `CHANGE_ME_GOOGLE_OAUTH_CLIENT_SECRET`) — não há credencial real versionada. Para habilitar o login com Google localmente:
+**Configuração das credenciais Google:** `keycloak/realm-export.json` (`identityProviders[0].config`) traz `clientId`/`clientSecret` como placeholders (`CHANGE_ME_GOOGLE_OAUTH_CLIENT_ID` / `CHANGE_ME_GOOGLE_OAUTH_CLIENT_SECRET`) — não há credencial real versionada. Abaixo está o passo a passo completo para gerar um `clientId`/`clientSecret` reais no Google Cloud Console e habilitar o login com Google localmente.
 
-1. Crie um OAuth Client ID no [Google Cloud Console](https://console.cloud.google.com/apis/credentials) com o Redirect URI:
-   ```
-   http://localhost:8080/realms/sso-platform/broker/google/endpoint
-   ```
-2. Preencha `clientId`/`clientSecret` reais em `keycloak/realm-export.json` **antes** do primeiro `docker compose up` (a importação do Realm é estática), ou configure-os manualmente depois pelo Admin Console (**Identity providers → Google**).
-3. Nunca faça commit de credenciais reais nesses campos — mantenha o arquivo com placeholders no controle de versão.
+### Passo a passo: criando o projeto e as credenciais no Google Cloud Console
+
+1.  **Crie (ou selecione) um projeto:**
+    *   Acesse o [Google Cloud Console](https://console.cloud.google.com/).
+    *   No seletor de projetos (topo da página), clique em **"Novo Projeto"**, dê um nome (ex.: `keycloak-sso-demo`) e clique em **Criar**.
+    *   Aguarde a criação e selecione o projeto recém-criado no seletor.
+
+2.  **Configure a tela de consentimento OAuth (obrigatório antes de criar credenciais):**
+    *   No menu lateral, vá em **APIs e Serviços → Tela de consentimento OAuth** ([link direto](https://console.cloud.google.com/apis/credentials/consent)).
+    *   Escolha o tipo de usuário **"Externo"** (permite qualquer conta Google fazer login; use "Interno" apenas se o projeto pertencer a um Google Workspace) e clique em **Criar**.
+    *   Preencha os campos obrigatórios: nome do app, e-mail de suporte do usuário e e-mail de contato do desenvolvedor. Os demais campos podem ficar em branco para uso local/dev.
+    *   Na etapa de **Escopos**, não é necessário adicionar nada além dos escopos padrão (`openid`, `email`, `profile`) — o Keycloak já solicita isso por padrão.
+    *   Na etapa de **Usuários de teste** (se o app ficar em modo "Teste"/"Em produção: não"), adicione os e-mails Google que serão usados para testar o login; contas fora dessa lista não conseguem autenticar enquanto o app não for publicado.
+    *   Salve e finalize o assistente.
+
+3.  **Crie o OAuth Client ID:**
+    *   Vá em **APIs e Serviços → Credenciais** ([link direto](https://console.cloud.google.com/apis/credentials)).
+    *   Clique em **Criar Credenciais → ID do cliente OAuth**.
+    *   Em **Tipo de aplicativo**, escolha **"Aplicativo da Web"**.
+    *   Dê um nome (ex.: `keycloak-broker`).
+    *   Em **URIs de redirecionamento autorizados**, adicione exatamente:
+        ```
+        http://localhost:8080/realms/sso-platform/broker/google/endpoint
+        ```
+    *   Clique em **Criar**.
+
+4.  **Copie o `clientId`/`clientSecret`:**
+    *   Após a criação, o Google exibe um modal com **"ID do cliente"** (`clientId`) e **"Chave secreta do cliente"** (`clientSecret`). Copie os dois — a chave secreta não é exibida novamente na íntegra depois (é possível gerar uma nova em **Credenciais → clique no client → Adicionar chave secreta**, se perder a original).
+
+### Aplicando as credenciais no projeto
+
+5.  Preencha `clientId`/`clientSecret` reais em `keycloak/realm-export.json` (`identityProviders[0].config.clientId` / `config.clientSecret`) **antes** do primeiro `docker compose up` (a importação do Realm é estática), ou configure-os manualmente depois pelo Admin Console (**Identity providers → Google**).
+6.  Nunca faça commit de credenciais reais nesses campos — mantenha o arquivo com placeholders no controle de versão.
 
 ---
 
