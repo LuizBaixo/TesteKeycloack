@@ -1,0 +1,156 @@
+{
+  "realm": "sso-platform",
+  "enabled": true,
+  "displayName": "SSO Platform",
+  "roles": { "realm": [
+    { "name": "admin", "description": "Administrator" },
+    { "name": "agenda_user", "description": "Agenda application user" },
+    { "name": "todo_user", "description": "To-do application user" }
+  ] },
+  "clients": [
+    {
+      "clientId": "agenda",
+      "name": "App Agenda",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "development-agenda-client-secret",
+      "standardFlowEnabled": true,
+      "serviceAccountsEnabled": true,
+      "redirectUris": ["http://localhost:8001/oidc/callback/"],
+      "webOrigins": ["http://localhost:8001"],
+      "attributes": {"post.logout.redirect.uris": "http://localhost:8001/*"},
+      "protocolMappers": [
+        {
+          "name": "realm roles in ID token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "signup_via",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "signup_via",
+            "claim.name": "signup_via",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "todo",
+      "name": "App To-Do",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "development-todo-client-secret",
+      "standardFlowEnabled": true,
+      "serviceAccountsEnabled": true,
+      "redirectUris": ["http://localhost:8002/oidc/callback/"],
+      "webOrigins": ["http://localhost:8002"],
+      "attributes": {"post.logout.redirect.uris": "http://localhost:8002/*"},
+      "protocolMappers": [
+        {
+          "name": "realm roles in ID token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "signup_via",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "signup_via",
+            "claim.name": "signup_via",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "providerId": "google",
+      "enabled": true,
+      "updateProfileFirstLoginMode": "on",
+      "trustEmail": false,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "hideOnLogin": false,
+      "config": {
+        "clientId": "CHANGE_ME_GOOGLE_OAUTH_CLIENT_ID",
+        "clientSecret": "CHANGE_ME_GOOGLE_OAUTH_CLIENT_SECRET",
+        "syncMode": "LEGACY",
+        "disableUserInfo": "false",
+        "filteredByClaim": "false",
+        "caseSensitiveOriginalUsername": "false",
+        "acceptsPromptNoneForwardFromClient": "false"
+      }
+    }
+  ],
+  "identityProviderMappers": [
+    {
+      "name": "mark-google-signup",
+      "identityProviderAlias": "google",
+      "identityProviderMapper": "hardcoded-attribute-idp-mapper",
+      "config": { "attribute": "signup_via", "attribute.value": "google" }
+    }
+  ],
+  "users": [
+    {
+      "username": "ana_admin", "enabled": true,
+      "credentials": [{"type": "password", "value": "senha123", "temporary": true}],
+      "realmRoles": ["admin", "agenda_user", "todo_user"]
+    },
+    {
+      "username": "lucas_agenda", "enabled": true,
+      "credentials": [{"type": "password", "value": "senha123", "temporary": true}],
+      "realmRoles": ["agenda_user"]
+    },
+    {
+      "username": "julia_todo", "enabled": true,
+      "credentials": [{"type": "password", "value": "senha123", "temporary": true}],
+      "realmRoles": ["todo_user"]
+    },
+    {
+      "username": "service-account-agenda", "enabled": true,
+      "serviceAccountClientId": "agenda",
+      "clientRoles": {"realm-management": ["manage-users", "view-realm"]}
+    },
+    {
+      "username": "service-account-todo", "enabled": true,
+      "serviceAccountClientId": "todo",
+      "clientRoles": {"realm-management": ["manage-users", "view-realm"]}
+    }
+  ]
+}
