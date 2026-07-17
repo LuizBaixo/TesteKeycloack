@@ -1,14 +1,12 @@
 # Arquitetura de Microserviços e Single Sign-On (SSO) com Keycloak e Django
 
-Este repositório contém o desenho arquitetural e a especificação de infraestrutura para a unificação de identidade e controle de acesso de duas aplicações independentes desenvolvidas em Python/Django: **App Agenda** e **App To-Do List**. 
-
-O objetivo central desta arquitetura é implementar uma solução robusta de **Single Sign-On (SSO)** utilizando o **Keycloak** como provedor de identidade (Identity Provider - IdP) baseado no protocolo **OpenID Connect (OIDC)**.
+Este repositório contém uma implementação funcional de **Single Sign-On (SSO)** para duas aplicações independentes em Python/Django — **App Agenda** e **App To-Do List** — usando o **Keycloak** como provedor de identidade (Identity Provider - IdP) via **OpenID Connect (OIDC)**.
 
 ## Execução local
 
 Pré-requisito: Docker com Docker Compose. Não é necessário instalar Python na máquina host.
 
-1. Copie `.env.example` para `.env` e substitua todas as credenciais antes de usar fora de desenvolvimento. Os `client secrets` do `.env` devem permanecer iguais aos definidos em `keycloak/realm-export.json` (a importação do Realm é estática).
+1. Copie `.env.example` para `.env` e substitua as credenciais antes de usar fora de desenvolvimento. Os `client secrets` do `.env` (`AGENDA_OIDC_CLIENT_SECRET`, `TODO_OIDC_CLIENT_SECRET`) devem permanecer iguais aos definidos em `keycloak/realm-export.json`, pois a importação do Realm é estática.
 2. Execute `docker compose up --build`.
 3. Acesse a Agenda em `http://localhost:8001`, o To-Do List em `http://localhost:8002` e o painel do Keycloak em `http://localhost:8080`.
 
@@ -20,7 +18,7 @@ Para reiniciar a importação do Realm durante o desenvolvimento, execute `docke
 
 ## 1. Visão Geral da Arquitetura
 
-A arquitetura adota uma abordagem descentralizada para os serviços de negócio (Agenda e Tarefas) e centralizada para a governança de identidade e credenciais. 
+A arquitetura adota uma abordagem descentralizada para os serviços de negócio (Agenda e Tarefas) e centralizada para a governança de identidade e credenciais.
 
 ```
                                +---------------------------------------+
@@ -43,9 +41,9 @@ A arquitetura adota uma abordagem descentralizada para os serviços de negócio 
 ```
 
 ### Componentes Core:
-1.  **Identity Provider (Keycloak):** Centralizador das contas de usuários, senhas, fluxos de MFA, e concessão de tokens de acesso (JWT).
+1.  **Identity Provider (Keycloak):** Centralizador das contas de usuários, senhas e concessão de tokens de acesso (JWT).
 2.  **Relying Parties (RP / Clients):** As duas aplicações Django agem como clientes OIDC que confiam no Keycloak para validar quem é o usuário autenticado.
-3.  **Isolamento de Dados:** Cada aplicação possui seu próprio ciclo de deploy e persistência de dados (Banco de Dados individual), mitigando acoplamentos arquiteturais.
+3.  **Isolamento de Dados:** Cada aplicação possui seu próprio banco de dados Postgres (`agenda-db`, `todo-db`), sem compartilhamento de tabelas entre os dois sistemas.
 
 ---
 
@@ -73,35 +71,35 @@ O processo de autenticação segue o fluxo padronizado pelo OIDC (**Authorizatio
      |<-- 12. Acesso Ok -----|
 ```
 
-1.  **Desafio de Autenticação:** O usuário tenta acessar a Agenda ou o To-Do List. Caso não possua sessão local ativa, o Middleware OIDC intercepta e o redireciona para a URL de login do Keycloak.
+1.  **Desafio de Autenticação:** O usuário tenta acessar a Agenda ou o To-Do List. Caso não possua sessão local ativa, o Middleware OIDC intercepta e o redireciona para a URL de login do Keycloak (`LOGIN_URL = "oidc_authentication_init"`).
 2.  **SSO (Single Sign-On):** Se o usuário já tiver efetuado login no Keycloak através de outra aplicação do ecossistema, o Keycloak identifica o cookie de sessão ativa e concede o acesso imediatamente, sem requerer nova digitação de senha.
 3.  **Backchannel Token Exchange:** A aplicação Django recebe um `Authorization Code` temporário e realiza uma requisição direta de servidor para servidor (backchannel) para trocá-lo pelos tokens JWT (`Access Token`, `ID Token` e `Refresh Token`).
-4.  **Consumo de Roles:** O Django descriptografa o `Access Token` recebido, valida a assinatura criptográfica através das chaves públicas expostas pelo Keycloak (`jwks_url`) e mapeia os perfis de acesso direto no objeto `request.user`.
+4.  **Consumo de Roles:** O Django valida a assinatura do `ID Token` (RS256) através das chaves públicas expostas pelo Keycloak (`OIDC_OP_JWKS_ENDPOINT`) e mapeia `realm_access.roles` para grupos Django dentro de `KeycloakBackend` (ver seção 5).
 
 ---
 
 ## 3. Matriz de Controle de Acesso (RBAC)
 
-A governança sobre o que cada usuário pode ou não fazer é definida usando **Role-Based Access Control (RBAC)** no nível do Realm do Keycloak. As regras de negócio avaliam essas claims em tempo de execução.
+A governança sobre o que cada usuário pode ou não fazer é definida usando **Role-Based Access Control (RBAC)** no nível do Realm do Keycloak. Cada view protegida usa o decorator `role_required(*roles)`, que checa `request.user.groups` e devolve `403` (via `handler403`) quando a role não bate.
 
 ### Definição de Roles (Papéis)
-*   `admin`: Papel global que concede prerrogativas completas de escrita, leitura e deleção em todos os ecossistemas, além de acesso aos painéis de administração do Django (`/admin`).
-*   `agenda_user`: Autoriza a visualização, criação e deleção de cronogramas na aplicação Agenda.
-*   `todo_user`: Autoriza a criação, atualização e encerramento de atividades na aplicação To-Do List.
+*   `admin`: Papel global que concede acesso completo em ambos os sistemas, além de `is_staff=True` (painel `/admin` do Django).
+*   `agenda_user`: Autoriza a visualização, criação e exclusão de compromissos na aplicação Agenda.
+*   `todo_user`: Autoriza a criação, conclusão e exclusão de tarefas na aplicação To-Do List.
 
 ### Cenários Práticos de Usuários Exemplo
 
 | Usuário | Credencial | Roles Associadas | Escopo de Acesso |
 | :--- | :--- | :--- | :--- |
-| **`ana_admin`** | `senha123` | `admin`, `agenda_user`, `todo_user` | Acesso irrestrito a ambos os sistemas e privilégios de superusuário. |
-| **`lucas_agenda`** | `senha123` | `agenda_user` | Acesso exclusivo ao ecossistema da **Agenda**. Bloqueado no To-Do List. |
-| **`julia_todo`** | `senha123` | `todo_user` | Acesso exclusivo ao ecossistema do **To-Do List**. Bloqueado na Agenda. |
+| **`ana_admin`** | `senha123` | `admin`, `agenda_user`, `todo_user` | Acesso irrestrito a ambos os sistemas e ao `/admin` do Django. |
+| **`lucas_agenda`** | `senha123` | `agenda_user` | Acesso exclusivo ao ecossistema da **Agenda**. Bloqueado (403) no To-Do List. |
+| **`julia_todo`** | `senha123` | `todo_user` | Acesso exclusivo ao ecossistema do **To-Do List**. Bloqueado (403) na Agenda. |
 
 ---
 
 ## 3.1 Login social com Google
 
-O Realm `sso-platform` tem um Identity Provider Google (`alias: google`) habilitado. Como o IdP é compartilhado pelos dois clients (`agenda` e `todo`), o botão "Google" aparece automaticamente na tela de login do Keycloak para as duas aplicações, e cada Django app também expõe um botão **"Continuar com Google"** na sua própria tela inicial (quando não há sessão ativa) que pula direto para o Google via `kc_idp_hint=google`, sem passar pela tela de escolha do Keycloak.
+O Realm `sso-platform` tem um Identity Provider Google (`alias: google`) habilitado. Como o IdP é compartilhado pelos dois clients (`agenda` e `todo`), o botão "Google" aparece automaticamente na tela de login do Keycloak para as duas aplicações, e cada Django app também expõe um botão **"Continuar com Google"** na sua própria tela inicial (quando não há sessão ativa) que pula direto para o Google via `kc_idp_hint=google` (`GoogleOIDCAuthenticationRequestView`), sem passar pela tela de escolha do Keycloak.
 
 **Provisionamento automático de acesso:** um usuário que nunca logou em nenhuma das apps e chega pelo Google não possui nenhuma role do Realm. Para que o acesso "já venha liberado" para a aplicação que ele usou para entrar (conforme a Matriz de RBAC da seção 3), o fluxo funciona assim:
 
@@ -111,49 +109,57 @@ O Realm `sso-platform` tem um Identity Provider Google (`alias: google`) habilit
 
 Isso só dispara para usuários **novos** sem role nenhuma (na prática, contas Google inéditas); contas locais de demonstração já vêm com suas roles pré-definidas no `realm-export.json` e não são afetadas — o isolamento de acesso entre Agenda e To-Do (ex.: `lucas_agenda` bloqueado no To-Do) continua valendo.
 
-⚠️ **Atenção:** o `client secret` real do Google OAuth está gravado em `keycloak/realm-export.json` (`identityProviders[0].config.clientSecret`) para sobreviver a um `docker compose down -v`. Diferente dos secrets de exemplo dos clients `agenda`/`todo`, este é um credencial real do Google Cloud Console — **não publique este repositório publicamente sem antes rotacionar/remover esse secret** ou movê-lo para um mecanismo de segredo adequado.
+**Configuração das credenciais Google:** `keycloak/realm-export.json` (`identityProviders[0].config`) traz `clientId`/`clientSecret` como placeholders (`CHANGE_ME_GOOGLE_OAUTH_CLIENT_ID` / `CHANGE_ME_GOOGLE_OAUTH_CLIENT_SECRET`) — não há credencial real versionada. Para habilitar o login com Google localmente:
 
-Se o Identity Provider Google precisar ser recriado manualmente (Admin Console: **Identity providers → Google**), o Redirect URI esperado pelo Google Cloud Console é:
-```
-http://localhost:8080/realms/sso-platform/broker/google/endpoint
-```
+1. Crie um OAuth Client ID no [Google Cloud Console](https://console.cloud.google.com/apis/credentials) com o Redirect URI:
+   ```
+   http://localhost:8080/realms/sso-platform/broker/google/endpoint
+   ```
+2. Preencha `clientId`/`clientSecret` reais em `keycloak/realm-export.json` **antes** do primeiro `docker compose up` (a importação do Realm é estática), ou configure-os manualmente depois pelo Admin Console (**Identity providers → Google**).
+3. Nunca faça commit de credenciais reais nesses campos — mantenha o arquivo com placeholders no controle de versão.
 
 ---
 
 ## 4. Estrutura de Diretórios do Projeto
 
 ```text
-meu-sistema-sso/
+Keycloack/
 │
 ├── docker-compose.yml         # Orquestração do Keycloak, Bancos de Dados e Apps
+├── .env.example                # Template de variáveis de ambiente (copiar para .env)
 │
 ├── keycloak/
-│   └── realm-export.json      # Configurações pré-definidas (Realm, Clients, Roles e Usuários)
+│   └── realm-export.json      # Configurações pré-definidas (Realm, Clients, Roles, IdP Google e Usuários)
 │
 ├── app_agenda/                # Microserviço 1 - Django
 │   ├── manage.py
 │   ├── agenda_project/
-│   │   ├── settings.py        # Configurações de Middleware OIDC & URLs de Autenticação
+│   │   ├── settings.py        # Config. mozilla-django-oidc & Middleware
+│   │   ├── oidc.py            # Logout central + entrada direta pelo Google
+│   │   ├── oidc_backend.py    # KeycloakBackend: roles -> grupos Django
 │   │   └── urls.py
-│   └── core/                  # Lógica de negócio da Agenda (Views, Models, Templates)
+│   └── core/                  # Views, Models (Appointment) e Templates da Agenda
 │
 └── app_todo/                  # Microserviço 2 - Django
     ├── manage.py
     ├── todo_project/
-    │   ├── settings.py        # Configurações de Middleware OIDC & URLs de Autenticação
+    │   ├── settings.py        # Config. mozilla-django-oidc & Middleware
+    │   ├── oidc.py             # Logout central + entrada direta pelo Google
+    │   ├── oidc_backend.py    # KeycloakBackend: roles -> grupos Django
     │   └── urls.py
-    └── tasks/                 # Lógica de negócio do To-Do (Views, Models, Templates)
+    └── tasks/                  # Views, Models (Task) e Templates do To-Do
 ```
 
 ---
 
-## 5. Estratégia de Integração no Django
+## 5. Implementação Django (estado atual)
 
-Para que os códigos Django operem de acordo com esta arquitetura, as seguintes diretrizes de engenharia devem ser observadas durante o desenvolvimento:
+1.  **Biblioteca OIDC:** `mozilla-django-oidc` (ver `requirements.txt` de cada app), configurada via `OIDC_RP_*` / `OIDC_OP_*` em `settings.py`. `OIDC_RP_SIGN_ALGO = "RS256"` é explícito porque a biblioteca assume HS256 por padrão, e o Keycloak assina os ID Tokens com RSA.
+2.  **Login/Logout:** `LOGIN_URL = "oidc_authentication_init"` (rota da própria biblioteca, montada em `path("oidc/", include("mozilla_django_oidc.urls"))`). O logout usa `OIDC_OP_LOGOUT_URL_METHOD = "<app>.oidc.logout_url"`, que redireciona também para o endpoint de logout do Keycloak, encerrando a sessão central.
+3.  **Mapeamento de Roles → Grupos Django:** `KeycloakBackend` (em `oidc_backend.py`, subclasse de `OIDCAuthenticationBackend`) lê `realm_access.roles` do token em `create_user`/`update_user`, sincroniza `user.groups` com as roles conhecidas (`admin`, `agenda_user`, `todo_user`) e define `is_staff = "admin" in roles`. É essa mesma classe que faz o auto-provisionamento de acesso via Google descrito na seção 3.1.
+4.  **Proteção de Views:** o decorator `role_required(*roles)` (definido em cada `views.py`) combina `@login_required` com uma checagem de `request.user.groups`, levantando `PermissionDenied` (HTTP `403`) quando a role não corresponde. `handler403` em `urls.py` renderiza um template `403.html` próprio de cada app.
 
-1.  **Bibliotecas Recomendadas:** Utilizar `mozilla-django-oidc` ou `django-allauth` com suporte a OpenID Connect.
-2.  **Configuração de Rotas:** Substituir a rota de login padrão do Django (`LOGIN_URL`) para direcionar para o endpoint de autenticação do backend OIDC da aplicação.
-3.  **Validação de Roles via Decodificação do JWT:**
-    *   O Keycloak envia as roles atribuídas dentro do payload do JWT na chave `realm_access.roles`.
-    *   Deve ser implementado um `OIDCBackend` customizado estendendo a classe padrão da biblioteca escolhida para interceptar o login, mapear as roles do Keycloak para grupos do Django ou injetar dinamicamente permissões/flags (`is_staff`, `is_superuser`).
-4.  **Proteção de Views:** Utilizar os decoradores padrão do Django como `@login_required` combinado com mixins ou decorators customizados que inspecionem as roles do usuário para barrar requisições não autorizadas com um HTTP `403 Forbidden`.
+### Funcionalidades implementadas
+
+*   **Agenda (`app_agenda/core`):** calendário mensal navegável (`?month=YYYY-MM`), criação e exclusão de compromissos (`Appointment`: título, data/hora, observações, cor), escopados ao usuário autenticado (`owner`).
+*   **To-Do List (`app_todo/tasks`):** listagem de tarefas (`Task`: título, prazo opcional, concluída), criação, alternância de status concluído/pendente e exclusão, escopadas ao usuário autenticado (`owner`).
